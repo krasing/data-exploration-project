@@ -1,0 +1,682 @@
+---
+output: html_document
+---
+Prosper Loans Exploration by Krasin Georgiev
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using
+# in your analysis in this code chunk.
+
+# Notice that the parameter "echo" was set to FALSE for this code chunk.
+# This prevents the code from displaying in the knitted HTML output.
+# You should set echo=FALSE for all code chunks in your file.
+
+library(ggplot2)
+library(GGally)
+library(dplyr)
+library(gridExtra)
+```
+
+```{r echo=FALSE, Load_the_Data}
+# Load the Data
+loans <- read.csv('prosperLoanData.csv')
+dict <- read.delim('Prosper Loan Data - Variable Definitions.tsv')
+```
+
+```{r echo=FALSE, Fix_variable_types}
+# Fix the type of existing variables 
+loans$Date <- strptime(loans$LoanOriginationDate, format = "%Y-%m-%d %H:%M:%S")
+loans$Year <- as.integer(format(loans$Date, "%Y"))
+loans$ClosedDate <- as.POSIXct(loans$ClosedDate, format = "%Y-%m-%d %H:%M:%S")
+levelsIncome = c("Not employed", "$0", "$1-24,999", "$25,000-49,999", "$50,000-74,999", "$75,000-99,999",
+  "$100,000+", "Not displayed")
+loans$IncomeRange = ordered(loans$IncomeRange, levelsIncome)
+loans$ProsperRating..Alpha. = ordered(loans$ProsperRating..Alpha., 
+                                      c('AA', 'A', 'B', 'C', 'D', 'E', 'HR'))
+
+```
+
+# Univariate Plots Section
+```{r echo=FALSE, Dataset_preview}
+knitr::kable(head(loans[,c(5, 64, 8, 10, 12, 6 )]))
+loans <- select(loans, Term, LoanStatus, ClosedDate, 
+                BorrowerAPR, BorrowerRate, LenderYield,
+                EstimatedLoss, EstimatedReturn, 
+                ProsperRating..Alpha., ProsperScore, 
+                EmploymentStatus, EmploymentStatusDuration, IsBorrowerHomeowner, 
+                CreditScoreRangeLower, CreditScoreRangeUpper,
+                DelinquenciesLast7Years,
+                DebtToIncomeRatio, IncomeRange, StatedMonthlyIncome,
+                LoanOriginalAmount, Date, MonthlyLoanPayment,
+                Recommendations, Year)
+names(loans)
+summary(loans)
+```
+
+Loans vary from $1000 to $35000. The monthly loan payment is from $130 to $2250.
+
+The average cost for the borrower (`BorrowerAPR`) is 21.9%, the average yield for the lender (`LenderYield`) is 18.2%. Considering that the estimated loss for the lender is 8 %, the return is actually 9.6% on average. These numbers vary quite widely - the return can be actually negative (minimal value at -18.3%) and in 50% of all cases is between 7.4% and 11%. So it will be interesting to see the distribution of borrower costs and investors profit. For the borrower the range is (`r with(subset(loans, !is.na(BorrowerAPR)), range(BorrowerAPR))`).
+
+```{r echo=FALSE, Univariate_Plots}
+qplot(BorrowerAPR, data = loans, binwidth = 0.005, xlim = c(0, 0.5))
+
+qplot(LenderYield, data = loans, binwidth = 0.005, xlim = c(0, 0.5))
+
+qplot(EstimatedReturn, data = loans, binwidth = 0.002)
+
+qplot(EstimatedLoss, data=loans, binwidth = 0.005) + xlim(c(0,0.2))
+```
+
+The distributions of Interest rate look similar in both cases, widely spread.
+Lenderers yield is squeezed and shifted to the left relative to the borrower APR.
+There is strange peak close to the maximum values. 
+The lenders estimated return is also multimodal distribution with strange peaks.
+
+There is a difference between client interest rate (`BorrowerAPR`) and investor interest rate (`LenderYield`). In order to explore the profit for Prosper we create a new variable `ProsperReturn`.
+
+```{r echo=FALSE, ProsperReturn}
+loans$ProsperReturn = loans$BorrowerAPR - loans$LenderYield
+summary(loans$ProsperReturn)
+qplot(ProsperReturn, data = loans, binwidth = 0.001, xlim = c(0, 0.1))
+```
+
+The average Prosper profit is 3.6% of all loans per year.
+From the histogram it is visible that values are clustered arround several points.
+
+There are only 3 options for loan period - 1, 3 and 5 years:
+
+```{r echo=FALSE, Term}
+table(loans$Term)
+```
+
+The following plot will visualize the distribution of the amounts loaned:
+
+```{r echo=FALSE, Ammount}
+qplot(LoanOriginalAmount, data = loans, binwidth = 1000,
+      breaks = seq(-500, 35500, 1000))
+
+qplot(LoanOriginalAmount, data = loans, binwidth = 200)
+```
+
+Loan ammounts in most cases take discrete values, e.g. 4000, 10000, 15000, 20000.
+The highest peak is for $4000.
+
+Next we explore the final state or the loan status.
+Because there are only few records wih status "Cancelled" we will remove them.
+Then "Completed" and "FinalPaymentInProgress" are merged in single level.
+Possible states are ordered in a logical way. 
+In another variable `LoanStatusShort` all "Past due" above 15 days are merged.
+
+```{r echo=FALSE, Loan_status}
+levels(loans$LoanStatus)
+nrow(loans[loans$LoanStatus == "Cancelled",])
+loans <- subset(loans, LoanStatus != "Cancelled")
+
+loans[loans$LoanStatus == "FinalPaymentInProgress","LoanStatus"] = "Completed"
+
+status_ordered = c("Completed", "Current",
+                   "Past Due (1-15 days)", 
+                   "Past Due (16-30 days)",
+                   "Past Due (31-60 days)",
+                   "Past Due (61-90 days)",
+                   "Past Due (91-120 days)",
+                   "Past Due (>120 days)",
+                   "Defaulted", "Chargedoff"
+                   )
+status_ordered_short = c("Completed", "Current",
+                   "Past Due (1-15 days)", 
+                   "Past Due (>15 days)",
+                   "Defaulted", "Chargedoff"
+                   )
+loans$LoanStatus = ordered(loans$LoanStatus, levels = status_ordered)
+loans$LoanStatusShort = ordered(loans$LoanStatus,
+                                levels = status_ordered_short)
+loans$LoanStatusShort[is.na(loans$LoanStatusShort)] <- "Past Due (>15 days)"
+qplot(LoanStatusShort, data = loans) +
+  theme(axis.text.x = element_text(angle=90, hjust=1))
+
+table(loans$LoanStatus)
+table(loans$LoanStatusShort)
+```
+
+We can see that most loans from our dataset are still current.
+In order to get idea for the risk of failed payments we will consider only the loans that should have been completed:
+
+```{r echo=FALSE, Loan_status_past}
+last_updated <- as.POSIXct("03/11/2014", format = "%d/%m/%Y")
+loans$PlannedClosing <- loans$Date + as.difftime(loans$Term*365/12, units = "days")
+past_loans <- subset(loans, PlannedClosing < last_updated)
+past_loans$IsCompleted <- past_loans$LoanStatus=="Completed"
+qplot(LoanStatusShort, data = past_loans) +
+  theme(axis.text.x = element_text(angle=90, hjust=1))
+
+table(past_loans$LoanStatusShort)/nrow(past_loans)*100
+```
+
+*About 65.6% of past loans are completed on time.* The rest are charged-off, defaulted or extended (still current).
+
+The number of Prosper loans by year is as follows:
+
+```{r echo=FALSE, Loans_by_year}
+table(loans$Year)
+```
+
+Most of the loans are still to be completed (these are loans for which the planned completion date is after the last dataset update date):
+
+```{r, Active_loans}
+table(loans$PlannedClosing > last_updated)
+```
+
+The risk of the loan is expressed as Prosper Rating:
+
+```{r echo=FALSE, Prosper_Rating}
+qplot(ProsperRating..Alpha., data = loans)
+```
+
+Another measure of the risk is Prosper Score:
+
+```{r echo=FALSE, ProsperScore}
+qplot(as.ordered(ProsperScore), data=loans)
+```
+
+and credit score:
+
+```{r echo=FALSE, Credit_Score}
+qplot(as.ordered(CreditScoreRangeUpper), data=loans) +
+  theme(axis.text.x = element_text(angle=90, hjust=1))
+```
+
+Debt to income ratio is:
+
+```{r echo=FALSE, DebtToIncomeRatio}
+ggplot(data = loans, aes(x = DebtToIncomeRatio)) + 
+  geom_bar(binwidth = 0.01) + xlim(0, 1.5)
+
+ggplot(data = loans, aes(x = DebtToIncomeRatio - 0.005)) + 
+  geom_bar(binwidth = 0.01) +
+  scale_x_sqrt(limits = c(0, 1.5))
+
+head(sort(table(loans$DebtToIncomeRatio), decreasing = TRUE), n = 10)
+```
+
+It looks nearly normally distributed on square axes x.
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+  There are `r nrow(loans)` loans in the dataset with 81 features, including loan amount, borrower rate (or interest rate), current loan status, borrower income, borrower employment status, borrower credit history, and the latest payment information. More information on variables in the data set is available at [Prosper website](https://www.prosper.com/) Dataset is last updated on 03/11/2014.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+The main features for the loans dataset are as follows:
+
+ - `BorrowerAPR` - the cost of credit as a yearly rate for the borrower.
+ The borrower's interest rate plus closing fee distrubuted in time;
+ - `LenderYield` - The Lender yield on the loan. 
+ The borrower's interest rate less the lender servicing fee.
+ - `EstimatedReturn` $\approx LenderYield - EstimatedLoss$ [Estimated Loss Rates](https://www.prosper.com/help/topics/general-estimated_loss_rates/)
+ - `LoanStatus` - The current status of the loan.
+ Past data about the possible final states *completed* and *charged of*
+ could be used to calculate actual loss rates.
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+
+These are some of features that determine the main features
+or give details about the loan.
+
+ - `LoanOriginalAmount` - The origination amount of the loan.
+ - `Term` - The length of the loan expressed in months.
+ - `ClosedDate` - Closed date is applicable for Cancelled, Completed, Chargedoff and Defaulted loan statuses.
+ - `ProsperRating..Alpha.`, `ProsperScore`, `CreditScoreRangeLower`,
+  `CreditScoreRangeUpper`: Used to calculate Estimated Loss
+ - `DelinquenciesLast7Years` - The number of times the borrower has been more than 90 days late with a payment.
+ - `DebtToIncomeRatio` - he sum of the borrower's monthly debt payments divided by the borrower's monthly income.
+ - `IncomeRange`, `StatedMonthlyIncome` - yearly income group and monthly income.
+ - `IsBorrowerHomeowner`
+ - `EmploymentStatus`, `EmploymentStatusDuration`
+ 
+These variables are of different types, e.g. date (`LoanOriginationDate`), 
+ordered factors (`ProsperRating..Alpha.`, `IncomeRange`), categorical factor (`EmploymentStatus`, `LoanStatus`, `Occupation`), binary (`IsBorrowerHomeowner`). There are also sparse variables (mostly zeroes): `Recommendations`.
+
+### Did you create any new variables from existing variables in the dataset?
+
+In order to estimate Prosper yield I created
+$ProsperYield = BorrowerAPR - LenderYield$
+
+To explore the changes of the main variables in time I converted `LoanOriginalAmount` to date type and then extracted the year as new variable
+`loans$Year`.
+
+The planned closing date was estimated as a sum of date of loan start and loan duration. It is used to subset only past loans that should be closed.
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+
+On Prosper profit histogram the values are clustered arround several points. 
+
+There is a strange peak in Interest rate histograms.
+
+Prosper rating and Prosper score have quite a few missing values.
+
+Date strings were converted to dates so they can be properly plotted, subtracted and compared. Some categorical variables were converted to ordered factors for better plotting.
+
+`LoanStatus` was modified to so that "FinalPaymentInProgress" is replaced by "Completed". Records with `LoanStatus` equal to "Canceled" were removed from the dataset, as not important for the analysis.
+
+# Bivariate Plots Section
+
+We can review the linear relationship between numerical variables:
+
+```{r echo=FALSE, Correlation_Matrix}
+cor(loans[, c(4, 5, 6, 7, 8, 10, 12, 14, 15, 16, 17, 19, 20, 22, 24, 25)],
+    use="pairwise.complete.obs")
+cor(loans$BorrowerAPR, as.numeric(loans$ProsperRating..Alpha.),
+    use="pairwise.complete.obs", method = "kendall")
+```
+
+Some of the variables have subtle differences, e.g. `BorrowerAPR`, `BorrowerRate`, `LenderYield` (corr. coef 0.99). In other cases stronger correlation shows important connections: `BorrowerAPR` is linked to `ProsperScore` (-0.67) and `CreditScoreRangeLower` (-0.43).
+
+The relationship between Loan status and close date:
+
+```{r echo=FALSE, Loan_Status_vs_Close_Date}
+table(loans$LoanStatus, !is.na(loans$ClosedDate))
+```
+
+Close date is available for Completed, Chargedoff and Defaulted loans.
+
+I would like to calculate the actual loss rate of past loans.
+I will start by exploring available risk indicators.
+The next explanation is quotation from Prosper website:
+
+> The estimated loss rate is based on the historical performance of Prosper loans with similar characteristics. The estimated base loss rate is determined by two scores: (1) the borrower's credit score, obtained from an official credit reporting agency, and (2) the Prosper Score, figured in-house based on the Prosper population. These two scores determine the base loss rate for each listing. Adjustments can then be made to the base loss rate for the presence of a previous Prosper loan and for certain loan terms. Any adjustments are added to the base loss rate to get the final loss rate, which then determines the Prosper Rating.
+
+So, Prosper rating and Prosper score are related:
+
+```{r echo=FALSE, ProsperScore_vs_ProsperRating}
+table(as.ordered(loans$ProsperScore), loans$ProsperRating..Alpha.)
+
+qplot(x=ProsperRating..Alpha., y=ProsperScore, data=loans) +
+  geom_boxplot()
+```
+
+It is strange that the worst Prosper rating does not have the lowest Prosper scores.
+
+The Prosper rating vs Year:
+```{r echo=FALSE, ProsperRating_vs_time}
+table(loans$Year, loans$ProsperRating..Alpha.)
+# show just the number of missing values in Prosper Rating:
+table(loans$Year, is.na(loans$ProsperRating..Alpha.))
+ggplot(data = loans,
+       aes(Year)) +
+  geom_bar(aes(ProsperRating..Alpha.)) +
+  facet_wrap(~Year, ncol = 2, scales="free_y")
+```
+
+Prosper rating is introduced in 2009. 
+Starting from 2011 all records have assigned Prosper rating.
+Comparing the distributions of loans by Prosper rating for early years
+and last years we see that they are quite different (flat vs "bell" shape).
+Therefore our conclusions based on past data will not be very representative
+of the current situation.
+
+Separate subset of past loans but without missing ProsperRating is created.
+
+```{r echo=FALSE, Past_Loans_Full}
+past_loans_full <- subset(past_loans, !is.na(past_loans$ProsperRating..Alpha.))
+nrow(past_loans_full)
+```
+
+The link between "EstimatedLoss" and "ProsperRating..Alpha." is visualized:
+
+```{r echo=FALSE, warning=FALSE, EstimatedLoss_vs_ProsperRating}
+
+qplot(x=ProsperRating..Alpha., y=EstimatedLoss, data=loans) +
+  geom_boxplot()
+'Correlation between estimated loss and Prosper rating:'
+with(subset(loans, !is.na(ProsperRating..Alpha.)), 
+     cor(as.integer(ProsperRating..Alpha.), EstimatedLoss)) 
+'Correlation between estimated loss and Prosper rating for past loans:'
+with(subset(past_loans_full, !is.na(ProsperRating..Alpha.)), 
+     cor(as.integer(ProsperRating..Alpha.), EstimatedLoss)) 
+```
+
+It is quite straitforward. Only "HR" rating has quite dispersed values.
+
+```{r echo=FALSE, warning=FALSE, EstimatedLoss_vs_ProsperRating_2}
+ggplot(data = loans, 
+     aes(x = as.integer(ProsperRating..Alpha.), y = EstimatedLoss)) + 
+  geom_line(stat='summary', fun.y = mean) +
+  geom_line(stat = 'summary', fun.y = quantile, probs=0.025, linetype = 2) +
+  geom_line(stat = 'summary', fun.y = quantile, probs=0.975, linetype = 2)
+
+```
+
+If we compare the loan closing date with the planned closing we will be surprised:
+We have early repayment in 76% of all cases:
+
+```{r echo=FALSE, Early_repayment}
+with(subset(loans, LoanStatus == "Completed"),
+     table(PlannedClosing > ClosedDate)/length(PlannedClosing))
+ggplot(data = subset(loans, LoanStatus == "Completed"),
+       aes(x = PlannedClosing, y = ClosedDate)) +
+  geom_jitter(alpha = 1/50)
+```
+
+The link between Prosper Rating and Loan status will be explored for past loans.
+
+```{r echo=FALSE, Prosper_Rating_vs_Completed}
+with(past_loans_full,
+     table(ProsperRating..Alpha., IsCompleted))
+
+ggplot(data = past_loans_full, 
+       aes(x = ProsperRating..Alpha., fill=IsCompleted)) +
+  geom_bar(position = 'fill')
+```
+
+The performance of loans with rating "A", "B" and "C" look very similar.
+Loans "D", "E" and "HR" are also similar considering completion status,
+with rating "HR" having higher completion ratio than "E".
+
+This can imply that borrowers with Prosper rating "C" should be prefered against "A", "B" and that "HR"  are better than "D", "E". Further exploration considering the actual amount lost for uncompleted loans worth exploration.
+
+```{r echo=FALSE, Prosper_Return_vs_Term}
+ggplot(data = loans, aes(x = ProsperReturn)) +
+  geom_histogram(binwidth = 0.001) +
+  facet_wrap(~Term, ncol = 1, scales="free_y") +
+  scale_x_continuous(limits = c(0, quantile(loans$ProsperReturn, 0.99, 
+                                            na.rm = TRUE)))
+```
+
+Prosper return is lower and less dispersed for longer duration loans.
+
+```{r echo=FALSE, LenderYield_vs_completion}
+ggplot(data = past_loans_full, 
+       aes(x = LenderYield, fill = IsCompleted)) +
+  geom_bar(position = 'fill', binwidth = 0.02)
+```
+
+```{r echo=FALSE, EstimatedLoss_vs_completion}
+ggplot(data = past_loans_full, 
+       aes(x = EstimatedLoss, fill = IsCompleted)) +
+  geom_bar(position = 'fill', binwidth = 0.05)
+```
+
+```{r echo=FALSE, Interest_rate_vs_completion}
+ggplot(data = past_loans_full, 
+       aes(x = EstimatedReturn, fill = IsCompleted)) +
+  geom_bar(position = 'fill', binwidth = 0.05)
+```
+
+```{r echo=FALSE, CreditScore_vs_completion}
+ggplot(data = past_loans_full, 
+       aes(x = CreditScoreRangeUpper, fill = IsCompleted)) +
+  geom_bar(position = 'fill', binwidth = 10)
+
+# Correlation between IsCompleted and CreditScoreRangeUpper:
+with(subset(past_loans, !is.na(CreditScoreRangeUpper)),
+     cor(CreditScoreRangeUpper, IsCompleted))
+
+# Correlation between IsCompleted and EstimatedLoss:
+with(subset(past_loans, !is.na(EstimatedLoss)),
+     cor(EstimatedLoss, IsCompleted))
+```
+
+The relationship of completed loans with credit score is much smooter than with Lender Yield and Estimated Loss. Therefore other factors except from risk level shape the interest rate for the lender. This means also that Credit Score is better measure for borrower reliability than the Estimated Loss.
+
+```{r echo=FALSE}
+ggplot(aes(x = EstimatedLoss, y=LenderYield), data = loans) +
+  geom_point(alpha=1/40, size=2, position = 'jitter') + ylim(c(0, 0.35))+
+  geom_line(stat='summary', fun.y = mean)
+
+ggplot(aes(x = EstimatedLoss, y=EstimatedReturn), data = loans) +
+  geom_point(alpha=1/40, size=2, position = 'jitter') + ylim(c(0, 0.35))+
+  geom_line(stat='summary', fun.y = mean, color = "red")
+
+```
+
+Next, changes in lender yield are cosidered in time:
+
+```{r echo=FALSE, LenderYield_Year_Boxplot}
+qplot(data = loans, x = ordered(Year), y = LenderYield) + geom_boxplot()
+
+ggplot(data = loans, aes(x = Date, y = LenderYield)) + 
+  geom_jitter(alpha = 1/50)
+```
+
+In last four years (2011 to 2014) there is continuous reduction in lenders yield.
+Also, lander yield looks quite different in different years. The period of no Prosper activity is also visible.
+
+```{r echo=FALSE, ProsperReturn_YearBoxplot}
+qplot(data = loans, y = ProsperReturn, x = ordered(Year)) + geom_boxplot()
+
+```
+
+At the same time Prosper profit is quite stable.
+
+Looking at the return based on loan original amount does not reveal interesting insights.
+
+```{r echo=FALSE, EstimatedReturn_LoanOriginalAmount}
+ggplot(data = loans, aes(y = EstimatedReturn, x = LoanOriginalAmount)) +
+      geom_jitter(alpha = 1/50,  size = 3) +
+  geom_smooth(size = 2, color = 'red')
+```
+
+There are more loans of small amounts and higher dispersion of the return.
+
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+
+We concluded that estimated loss is closely related to Prosper Rating.
+
+The relationship between the proportion of completed loans and Credit Score is stronger than to Prosper Rating or Estimated Loss.
+
+Estimated return is related to estimated loss. The relationship is not linear and there is optimal estimated loss for maximal return.
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+
+The most interesting insight is that big part (76%) of the completed loans are repayed in advance, before the planned closing date.
+
+### What was the strongest relationship you found?
+
+Correlation between estimated loss and Prosper rating: 0.96.
+
+
+# Multivariate Plots Section
+
+Lender Yield and Return are presented on the same plot so that the effect on the profit of higher risk loans with higher interest is clear. Only the mean value and 0.05, 0.5 and 0.95 quantiles will be presented to show the general trend and uncertainty level.
+
+```{r echo=FALSE, warning=FALSE, Multivariate_Plots}
+ggplot(aes(x = round(EstimatedLoss/4,digits = 2)*4, y=LenderYield),
+       data = loans) +
+  geom_line(stat='summary', fun.y = median, linetype = 2, color = 'blue') +
+  geom_line(stat='summary', fun.y = mean, color = 'blue',
+            alpha=1/2, size = 2,  show_guide = FALSE) +
+  geom_line(stat = 'summary', fun.y = quantile, probs=0.05,
+    linetype = 2, color = 'blue', alpha=1/2) +
+  geom_line(stat = 'summary', fun.y = quantile, probs=0.95,
+    linetype = 2, color = 'blue', alpha=1/2) +
+  geom_line(aes(y=EstimatedReturn), alpha=1/2, size = 2, color = 'red',
+            stat='summary', fun.y = mean)+
+  geom_line(aes(y=EstimatedReturn), color = 'red', alpha=1/2,
+            stat='summary', fun.y = median, linetype = 2) +
+  geom_line(aes(y=EstimatedReturn), linetype = 2,
+            alpha=1/2, color = 'red',
+            stat='summary', fun.y = quantile, probs=0.95) +
+  geom_line(aes(y=EstimatedReturn), color = 'red', alpha=1/2, 
+            stat='summary', fun.y = quantile, probs=0.05, linetype = 2) +
+  ylab('Lender Yield and Return')
+```
+
+There is optimum between losses 0.1 and 0.2. At higher losses there is jump in uncertainty.
+
+Next, changes in lender yield are considered in time:
+
+```{r echo=FALSE, LenderYield_Year}
+ggplot(data = loans, 
+       aes(x = Date, y = LenderYield, color = ProsperRating..Alpha.) ) +
+  geom_point(alpha = 1/100)
+
+ggplot(data = loans, 
+       aes(x = Date, y = LenderYield, color = ProsperRating..Alpha.) ) +
+  geom_smooth(method='lm', size=2) 
+```
+
+The same for prosper return:
+
+```{r echo=FALSE, ProsperReturn_Year}
+ggplot(data = loans, 
+       aes(x = Date, y = ProsperReturn, color = ProsperRating..Alpha.) ) +
+  geom_point(alpha = 1/20)
+
+ggplot(data = loans, 
+       aes(x = Date, y = ProsperReturn, color = ProsperRating..Alpha.) ) +
+  geom_smooth(method='lm', size=2) 
+```
+
+```{r echo=FALSE}
+qplot(x = CreditScoreRangeUpper, y = StatedMonthlyIncome, color = IsCompleted,
+      data = past_loans, alpha = 1/20, size = 1, position = 'jitter') +
+  scale_y_log10(limits = c(1e0, 1e6)) +
+  xlim(400, 800)
+```
+
+The relationship between monthly income, credit score and isCompleted - nothing special!
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+
+Lender Yield and Return are presented on the same plot as a function of estimated loss. Above losses 0.2 lender yield stop to increase and lender return drops sharply. At higher losses there is jump in uncertainty.
+
+Lenders Yield is reduced in years. This become more clear when loans are divided by Prosper rating. On the contrary, Prosper Return is increasing.
+
+### Were there any interesting or surprising interactions between features?
+
+Several different periods in Prosper loan data can be identified with jump change of loan properties (e.g. see LendersYield vs Date). Therefore most of the conclusion in this report should be treated with causion.
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the strengths and limitations of your model.
+
+A model exploring how different features influence `IsCompleted` variable for past loans can be used to fine tune risk measure variables (e.g. `ProsperRating`).
+
+------
+
+# Final Plots and Summary
+
+### Plot One - the link between Prosper Rating and Loan status for past loans
+
+```{r echo=FALSE, Plot_One}
+theme_set(theme_minimal(12))
+g1 <- ggplot(data = past_loans_full, 
+             aes(x = ProsperRating..Alpha., fill=IsCompleted)) +
+  geom_bar(position = 'fill',  show_guide = FALSE) +
+  xlab('Prosper rating') +
+  ylab('Proportion of uncompleted loans') 
+
+g2 <- ggplot(data = past_loans_full, 
+             aes(x = EstimatedLoss, fill = IsCompleted)) +
+  geom_bar(position = 'fill', binwidth = 0.05,  show_guide = FALSE) +
+  xlab('Estimated loss')  +
+  ylab('')  +
+  scale_y_continuous(breaks=NULL)
+
+g3 <- ggplot(data = past_loans_full, 
+             aes(x = CreditScoreRangeUpper, fill = IsCompleted)) +
+  geom_bar(position = 'fill', binwidth = 40,  show_guide = FALSE) +
+  xlab('Credit Score')  +
+  ylab('') +
+  scale_y_continuous(breaks=NULL)
+
+grid.arrange(g1, g2, g3, ncol = 3, top = 'Uncompleted loans ratio vs different risk measures') 
+```
+
+### Description One
+
+Based on past loans we calculate the proportion of uncompleted loans based on different risk measures - Prosper Rating, Estimated losses and Credit Score. 
+
+The relationship of completed loans with credit score is much smooter than with Lender Yield and Estimated Loss. Looks like Credit Score is better measure for borrower reliability than the Estimated Loss and Prosper Rating.
+
+Prosper rating is important because it determines the Interest rate. 
+The performance of loans with rating "A", "B" and "C" look very similar. 
+Loans "D", "E" and "HR" are also similar considering completion status,
+with rating "HR" having higher completion ratio than "E".
+This can imply that borrowers with Prosper rating "C" should be prefered against "A", "B" and that "HR"  are better than "D", "E".
+
+Further exploration considering the actual amount lost for uncompleted loans worth exploration.
+
+
+### Plot Two
+```{r echo=FALSE, warning=FALSE, Plot_Two}
+ggplot(aes(x = round(EstimatedLoss/4,digits = 2)*4, y=LenderYield),
+       data = loans) +
+  geom_point(aes(x = EstimatedLoss, y=EstimatedReturn), alpha=1/100, size=1,
+             color = "green", shape = 21) +
+  geom_point(aes(x = EstimatedLoss, y=LenderYield), alpha=1/100, size=1,
+             position = 'jitter', color = "yellow", shape = 21) +
+  geom_line(stat='summary', fun.y = median, linetype = 2, color = 'blue') +
+  geom_line(stat='summary', fun.y = mean, aes(color = 'Mean lender yield'), 
+            alpha=1/2, size = 2,  show_guide = FALSE) +
+  geom_line(stat = 'summary', fun.y = quantile, probs=0.05,
+    linetype = 2, color = 'blue', alpha=1/2) +
+  geom_line(stat = 'summary', fun.y = quantile, probs=0.95,
+    linetype = 2, color = 'blue', alpha=1/2) +
+  geom_line(aes(y=EstimatedReturn, color = 'Mean estimated return'), alpha=1/2, size = 2,
+            stat='summary', fun.y = mean)+
+  geom_line(aes(y=EstimatedReturn), color = 'red', alpha=1/2,
+            stat='summary', fun.y = median, linetype = 2) +
+  geom_line(aes(y=EstimatedReturn, linetype = 'Estimated return quantiles'),
+            alpha=1/2, color = 'red',
+            stat='summary', fun.y = quantile, probs=0.95) +
+  geom_line(aes(y=EstimatedReturn), color = 'red', alpha=1/2, 
+            stat='summary', fun.y = quantile, probs=0.05, linetype = 2) +
+  xlab('Lender estimated loss') +
+  ylab('Lender yield (interest rate) \n 
+       and estimated return (losses accounted)') +
+  scale_color_manual(values=c("Mean estimated return"="red",
+                              "Mean lender yield"="blue"),
+                     guide = guide_legend(title = NULL)) +
+  scale_linetype_manual(values=c("Estimated return quantiles"=2),
+                     guide = guide_legend(title = NULL)) +
+  ggtitle('Lender yield and estimated return based on estimated loss')
+
+```
+
+### Description Two
+
+Both lender yield (interest rate) and return are presented as a function of lender estimated loss. Because at the same estimated loss different interests are possible, mean value and [0.05, 0.5, 0.95] quantiles are presented.
+
+Up to 15% loss both yield and return are increasing. Then yield become constant but the return start to drop. Therefore, there is a kind of optimal risk acceptance level for highest profit. Both low and high losses have low return, but high losses can lead even to negative return.
+
+Uncertainty become much higher at estimate loss above 25%. There is wide margine in negative direction.
+
+### Plot Three
+```{r echo=FALSE, Plot_Three}
+ggplot(data = subset(loans, LoanStatus == "Completed"),
+       aes(x = PlannedClosing, y = ClosedDate)) +
+  geom_jitter(alpha = 1/50) +
+  xlab("Planned loan closeing date") +
+  ylab("Actual closing date") +
+  ggtitle("Early repayments")
+```
+
+### Description Three
+
+Early repayment is typical situation.
+All points below the diagonal bolder line are preliminary payments.
+------
+
+# Reflection
+
+Two datasets were used for this analysis. One is the original full dataset. It is used to calculate the relationship between the primary parameters, like lenders return vs estimated loss.
+
+The other dataset containes only past records that should have expired. For this past data we have the information whether the loan have been completed (or Chargedoff-ed). It is used to check the effectiveness of different risk measures. We noticed that 35% the past loans have not been completed in terms. The best measure of the risk is Credit Score. Prosper ratings "C" and "HR" should be preferred for lenders with lower and higher tolerance to risk. 
+
+It will be usefull to continue the exploration by calculating what part of the total amount is lost for uncompleted loans and how it differes for different borrower categories.
+
+The biggest problem  was that the main feature of interest - the actual return is not available and should be estimated somehow. This is complicated by the enormous number of features. Specialized feature selection algorithms could be important to guide the analysis.
+
+NOTE: Our conclusions are based on past data and will not be very representative of the current situation because the Prosper system is changing in years.
+
+Working with dates created some technical difficulties. Some methods and operations result into POSIXlt date, other in POSIXct. Trying to compare them throws error. Mastering the fine differences between
+`strptime`, `strftime`, `as.Date`, `as.POSIXct`, `as.difftime`
+could be challenging.
+

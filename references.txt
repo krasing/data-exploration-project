@@ -1,0 +1,13 @@
+References
+
+Estimated Loss Rates
+https://www.prosper.com/help/topics/general-estimated_loss_rates/
+
+How to Read a Loan Listing
+https://www.prosper.com/help/topics/how-to-read-a-loan-listing/
+
+Using Dates and Times in R
+http://www.r-bloggers.com/using-dates-and-times-in-r/
+
+Adding legend to ggplot when lines were added manually
+http://stackoverflow.com/questions/18060116/adding-legend-to-ggplot-when-lines-were-added-manually
