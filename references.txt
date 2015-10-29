@@ -11,3 +11,9 @@ http://www.r-bloggers.com/using-dates-and-times-in-r/
 
 Adding legend to ggplot when lines were added manually
 http://stackoverflow.com/questions/18060116/adding-legend-to-ggplot-when-lines-were-added-manually
+
+Visualize correlation matrix using correlogram
+http://www.sthda.com/english/wiki/visualize-correlation-matrix-using-correlogram
+
+DAT203x: Data Science and Machine Learning Essentials, Microsoft
+https://courses.edx.org/courses/course-v1:Microsoft+DAT203x+1T2016/info
